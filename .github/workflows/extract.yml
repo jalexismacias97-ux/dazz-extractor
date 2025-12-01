@@ -1,54 +1,51 @@
-name: Extract Assets (Modo Seguro)
+name: Extractor V3 (Método ZIP)
 
 on: [push]
 
 jobs:
   extract_assets:
-    runs-on: macos-latest  # Usamos la última versión para evitar problemas de compatibilidad
+    runs-on: macos-latest
 
     steps:
       - name: 1. Descargar tu repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🔍 Verificar dónde está el archivo
+      - name: 2. 🛠 Descargar herramienta (SIN GIT)
         run: |
-          echo "Buscando Assets.car..."
-          find . -maxdepth 2 -name "*.car"
-          # Esto nos mostrará si el archivo se llama assets.car, Assets.car, o si está en una carpeta
-
-      - name: 3. 🛠 Descargar herramienta (Método ZIP)
-        run: |
-          # En lugar de git clone (que te dio error 128), bajamos el ZIP directo
+          # AQUÍ ESTÁ EL ARREGLO:
+          # En lugar de clonar, descargamos el ZIP directamente.
+          # Esto evita el error de "Device not configured" / "Username".
           curl -L https://github.com/0xced/cartool/archive/refs/heads/master.zip -o cartool.zip
           unzip -q cartool.zip
           mv cartool-master cartool
 
-      - name: 4. 🔨 Compilar herramienta
+      - name: 3. 🔨 Compilar herramienta
         run: |
           cd cartool
           xcodebuild -scheme cartool -configuration Release
 
-      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
+      - name: 4. 🚀 EJECUTAR EXTRACCIÓN
         run: |
           mkdir output_images
           
-          # Intentamos encontrar el archivo sin importar mayúsculas/minúsculas
+          # Buscamos el archivo ignorando mayúsculas/minúsculas
+          # Esto encuentra Assets.car o assets.car automáticamente
           FILE=$(find . -maxdepth 1 -iname "assets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
-            echo "❌ ERROR FATAL: No encuentro el archivo Assets.car en la raíz."
-            echo "Estos son los archivos que hay en tu repo:"
+            echo "❌ ERROR: No encuentro el archivo Assets.car"
+            echo "Archivos en la carpeta actual:"
             ls -la
             exit 1
           else
             echo "✅ Archivo encontrado: $FILE"
-            # Ejecutamos la herramienta
+            # Ejecutamos la herramienta compilada
             ./cartool/build/Release/cartool "$FILE" output_images/
           fi
 
-      - name: 6. 📦 Subir lo que encontramos
+      - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales
+          name: Filtros-Extraidos
           path: output_images/
