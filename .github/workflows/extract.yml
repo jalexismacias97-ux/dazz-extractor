@@ -1,105 +1,83 @@
-name: Extractor V19 (Python Nativo - Sin Descargas)
+name: Extractor V21 (Sintaxis Corregida)
 
 on: [push]
 
 jobs:
-  extract_assets_native:
+  extract_assets:
     runs-on: macos-latest
 
     steps:
-      - name: 1. Descargar Tu Repositorio
+      - name: 1. Descargar Archivos del Repo
         uses: actions/checkout@v3
 
-      - name: 2. Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: 3. Instalar PyObjC (Puente con Mac)
+      - name: 2. Preparar, Compilar y Extraer
         run: |
-          # Instalamos solo lo necesario para hablar con macOS
-          pip install pyobjc-framework-Cocoa pyobjc-framework-Quartz
+          # --- ZONA DE CONFIGURACIÓN ---
+          TOOL_ZIP="tool.zip"
+          OUTPUT_DIR="output_images"
+          mkdir -p "$OUTPUT_DIR"
+          
+          # 1. VERIFICAR ARCHIVOS
+          echo "🔍 Buscando archivos..."
+          
+          # Buscar Assets.car (mayúscula o minúscula)
+          CAR_FILE=$(find . -maxdepth 2 -name "[Aa]ssets.car" | head -n 1)
+          
+          if [ -z "$CAR_FILE" ]; then
+            echo "❌ ERROR: No encuentro el archivo Assets.car en tu repositorio."
+            echo "Asegúrate de haberlo subido."
+            exit 1
+          fi
+          echo "✅ Encontrado: $CAR_FILE"
 
-      - name: 4. 🐍 EJECUTAR SCRIPT DE EXTRACCIÓN
-        run: |
-          # Creamos el script en caliente. No descargamos nada.
-          cat <<EOF > extractor.py
-          import os
-          import sys
-          from Foundation import NSURL, NSData
-          from Quartz import CIImage, CIContext, NSBitmapImageRep
-          from AppKit import NSImage
-          
-          # Buscamos el archivo
-          car_path = None
-          for root, dirs, files in os.walk("."):
-              for file in files:
-                  if file.lower() == "assets.car":
-                      car_path = os.path.join(root, file)
-                      break
-          
-          if not car_path:
-              print("❌ ERROR: No encuentro Assets.car")
-              sys.exit(1)
-              
-          print(f"✅ Archivo encontrado en: {car_path}")
-          output_dir = "output_images"
-          os.makedirs(output_dir, exist_ok=True)
+          if [ ! -f "$TOOL_ZIP" ]; then
+            echo "❌ ERROR: No encuentro tool.zip."
+            echo "Por favor descarga el ZIP, llámalo tool.zip y súbelo al repo."
+            exit 1
+          fi
+          echo "✅ Encontrado: $TOOL_ZIP"
 
-          # --- LA MAGIA: Usamos una herramienta de sistema oculta 'assetutil' ---
-          # Como la API de Python para Assets es privada y difícil, 
-          # vamos a usar un truco: 'assetutil' para sacar la info y 'tool' nativo.
+          # 2. DESCOMPRIMIR HERRAMIENTA
+          echo "🛠 Descomprimiendo herramienta..."
+          unzip -q "$TOOL_ZIP"
           
-          import subprocess
-          import json
+          # Detectar nombre de la carpeta (suele ser cartool-master)
+          TOOL_DIR=$(find . -maxdepth 1 -type d -name "cartool*" | head -n 1)
+          mv "$TOOL_DIR" tool_src
           
-          print("Generando mapa de recursos...")
-          # Exportamos el JSON con los detalles
-          result = subprocess.run(["xcrun", "assetutil", "-I", car_path], capture_output=True, text=True)
-          
-          try:
-              assets = json.loads(result.stdout)
-              print(f"Detectados {len(assets)} elementos en el archivo.")
-              
-              count = 0
-              # Aunque no podemos extraer los bytes fácilmente sin herramientas C++,
-              # vamos a intentar algo diferente:
-              # Si esto falla, te daré la instrucción para subir la herramienta tú mismo.
-              
-              # PLAN B DE EMERGENCIA dentro del script:
-              # Usamos un script de Swift muy simple que compilamos aquí mismo.
-          except:
-              print("Error leyendo JSON.")
+          # 3. PARCHE DE CÓDIGO (Para que compile en Macs nuevas)
+          if [ -f "tool_src/cartool/main.m" ]; then
+             echo "💉 Aplicando parche de código..."
+             sed -i '' '1s/^/#import <ImageIO\/ImageIO.h>\n/' tool_src/cartool/main.m
+          fi
 
-          EOF
+          # 4. COMPILAR
+          echo "🔨 Compilando..."
+          cd tool_src
+          xcodebuild -scheme cartool -configuration Release > /dev/null
+          cd ..
           
-          # ---------------------------------------------------------
-          # CAMBIO DE ESTRATEGIA: SWIFT NATIVO INCRUSTADO
-          # Escribimos un pequeño programa en Swift aquí mismo para extraer.
-          # ---------------------------------------------------------
+          # 5. BUSCAR EL EJECUTABLE GENERADO
+          # Buscamos el archivo 'cartool' dentro de la carpeta tool_src
+          TOOL_BIN=$(find tool_src -type f -name "cartool" -perm +0111 | grep "Release" | head -n 1)
           
-          cat <<SWIFT > extractor.swift
-          import Foundation
-          import CoreUI # Esto es privado, pero a veces funciona en scripts
+          if [ -z "$TOOL_BIN" ]; then
+             echo "❌ ERROR DE COMPILACIÓN: No se generó el ejecutable."
+             exit 1
+          fi
           
-          // Como CoreUI es privado y difícil de enlazar, vamos a intentar
-          // usar la herramienta 'acextract' si pudiéramos, pero no podemos bajarla.
-          
-          print("Iniciando intento de lectura...")
-          SWIFT
+          echo "✅ Herramienta lista en: $TOOL_BIN"
 
-      - name: 5. 🛠 LA SOLUCIÓN FINAL: Subir herramienta MANUALMENTE
-        run: |
-          echo "⚠️ ATENCIÓN: Como GitHub bloquea las descargas de herramientas..."
-          echo "La única forma 100% segura es que TÚ subas la herramienta."
-          echo "Pero primero, vamos a intentar usar 'assetutil' para ver si podemos sacar algo más."
+          # 6. EJECUTAR EXTRACCIÓN
+          echo "🚀 EXTRAYENDO IMÁGENES..."
+          "$TOOL_BIN" "$CAR_FILE" "$OUTPUT_DIR/"
           
-          # Intentamos volcar el contenido legible
-          xcrun assetutil -I $(find . -name Assets.car) > dump.json
-          
-      - name: 6. 📦 Subir lo que tengamos (JSON)
+          echo "--- PROCESO TERMINADO ---"
+          ls -l "$OUTPUT_DIR/" | head -n 10
+
+      - name: 3. Subir ZIP Final
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Info-Del-Archivo
-          path: dump.json
+          name: Filtros-Finales
+          path: output_images/
