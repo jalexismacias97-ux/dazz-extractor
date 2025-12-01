@@ -1,23 +1,23 @@
-name: Extractor V3 (Método ZIP)
+name: Extractor Infalible (GH CLI)
 
 on: [push]
 
 jobs:
   extract_assets:
     runs-on: macos-latest
+    permissions:
+      contents: read
 
     steps:
       - name: 1. Descargar tu repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Descargar herramienta (SIN GIT)
+      - name: 2. 🛠 Descargar herramienta (Modo Oficial)
         run: |
-          # AQUÍ ESTÁ EL ARREGLO:
-          # En lugar de clonar, descargamos el ZIP directamente.
-          # Esto evita el error de "Device not configured" / "Username".
-          curl -L https://github.com/0xced/cartool/archive/refs/heads/master.zip -o cartool.zip
-          unzip -q cartool.zip
-          mv cartool-master cartool
+          # Usamos la herramienta oficial de GitHub (gh) para clonar
+          # Esto evita errores de contraseña y enlaces rotos
+          gh repo clone 0xced/cartool tool_temp
+          mv tool_temp cartool
 
       - name: 3. 🔨 Compilar herramienta
         run: |
@@ -28,18 +28,17 @@ jobs:
         run: |
           mkdir output_images
           
-          # Buscamos el archivo ignorando mayúsculas/minúsculas
-          # Esto encuentra Assets.car o assets.car automáticamente
-          FILE=$(find . -maxdepth 1 -iname "assets.car" | head -n 1)
+          # Buscamos el archivo Assets.car donde sea que esté
+          FILE=$(find . -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro el archivo Assets.car"
-            echo "Archivos en la carpeta actual:"
-            ls -la
+            echo "❌ ERROR: No encuentro el archivo Assets.car en ningún lado."
+            echo "Listado de archivos:"
+            ls -R
             exit 1
           else
-            echo "✅ Archivo encontrado: $FILE"
-            # Ejecutamos la herramienta compilada
+            echo "✅ Archivo encontrado en: $FILE"
+            # Ejecutamos la herramienta
             ./cartool/build/Release/cartool "$FILE" output_images/
           fi
 
@@ -47,5 +46,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Extraidos
+          name: Filtros-Finales-VIP
           path: output_images/
