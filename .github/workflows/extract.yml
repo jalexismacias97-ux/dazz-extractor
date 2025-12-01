@@ -1,4 +1,4 @@
-name: Extractor V10 (Vía Homebrew)
+name: Extractor V11 (Git Robusto)
 
 on: [push]
 
@@ -10,22 +10,29 @@ jobs:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🍺 Instalar Cartool desde Homebrew
+      - name: 2. 🛠 Clonar Herramienta (Modo Seguro)
         run: |
-          echo "Conectando con la tienda de fórmulas..."
-          # Añadimos el repositorio de fórmulas de Keith (muy famoso en iOS dev)
-          brew tap keith/formulae
+          echo "Preparando entorno Git..."
           
-          echo "Instalando cartool..."
-          # Instalamos la herramienta ya compilada.
-          # Homebrew maneja los espejos de descarga automáticamente.
-          brew install cartool
+          # TRUCO: "|| true" significa "Si esto falla, no pares, sigue."
+          # Esto evita el error "Exit Code 5" que tuvimos antes.
+          git config --global --unset credential.helper || true
           
-          # Verificamos que se instaló
-          which cartool
-          cartool --version || echo "Cartool instalado correctamente"
+          echo "Clonando repositorio..."
+          # Clonamos el código fuente directamente
+          git clone https://github.com/0xced/cartool.git cartool_src
+          
+          # Renombramos la carpeta para facilitar el siguiente paso
+          mv cartool_src cartool
 
-      - name: 3. 🔍 Localizar Assets.car
+      - name: 3. 🔨 Compilar Herramienta
+        run: |
+          cd cartool
+          echo "Compilando..."
+          # Usamos el compilador de Mac
+          xcodebuild -scheme cartool -configuration Release
+
+      - name: 4. 🔍 Localizar Assets.car
         id: find_file
         run: |
           # Buscamos tu archivo
@@ -40,18 +47,19 @@ jobs:
           echo "found_file=$FILE" >> $GITHUB_OUTPUT
           echo "✅ Archivo encontrado: $FILE"
 
-      - name: 4. 🚀 EJECUTAR EXTRACCIÓN
+      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
         run: |
           mkdir output_images
           FILE="${{ steps.find_file.outputs.found_file }}"
           
           echo "Extrayendo $FILE..."
-          # Ejecutamos el comando directo (ya está en el PATH)
-          cartool "$FILE" output_images/
+          
+          # Ejecutamos la herramienta que acabamos de compilar
+          ./cartool/build/Release/cartool "$FILE" output_images/
 
-      - name: 5. 📦 Subir Resultados
+      - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Originales
+          name: Filtros-Dazz-Extraidos
           path: output_images/
