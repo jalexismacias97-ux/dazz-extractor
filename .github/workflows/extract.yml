@@ -1,4 +1,4 @@
-name: Extractor Infalible (GH CLI)
+name: Extractor V4 (Blindado)
 
 on: [push]
 
@@ -12,39 +12,47 @@ jobs:
       - name: 1. Descargar tu repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Descargar herramienta (Modo Oficial)
+      - name: 2. 🛠 Descargar herramienta (Vía GH CLI + Token)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Usamos la herramienta oficial de GitHub (gh) para clonar
-          # Esto evita errores de contraseña y enlaces rotos
-          gh repo clone 0xced/cartool tool_temp
-          mv tool_temp cartool
+          # Usamos la herramienta oficial con tus credenciales temporales
+          # Esto EVITA el error de "Device not configured" y el error del ZIP corrupto
+          gh repo clone 0xced/cartool cartool_folder
+          mv cartool_folder cartool
 
       - name: 3. 🔨 Compilar herramienta
         run: |
           cd cartool
           xcodebuild -scheme cartool -configuration Release
 
-      - name: 4. 🚀 EJECUTAR EXTRACCIÓN
+      - name: 4. 🔍 Localizar Assets.car
+        id: find_file
         run: |
-          mkdir output_images
-          
-          # Buscamos el archivo Assets.car donde sea que esté
-          FILE=$(find . -type f -name "[Aa]ssets.car" | head -n 1)
+          # Buscamos el archivo ignorando mayúsculas/minúsculas
+          FILE=$(find . -maxdepth 2 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro el archivo Assets.car en ningún lado."
-            echo "Listado de archivos:"
-            ls -R
-            exit 1
-          else
-            echo "✅ Archivo encontrado en: $FILE"
-            # Ejecutamos la herramienta
-            ./cartool/build/Release/cartool "$FILE" output_images/
+             echo "❌ NO ENCUENTRO EL ARCHIVO Assets.car"
+             echo "Archivos disponibles:"
+             ls -R
+             exit 1
           fi
+          
+          echo "found_file=$FILE" >> $GITHUB_OUTPUT
+          echo "✅ Archivo encontrado: $FILE"
 
-      - name: 5. 📦 Subir Resultados
+      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
+        run: |
+          mkdir output_images
+          FILE="${{ steps.find_file.outputs.found_file }}"
+          
+          # Ejecutamos la herramienta
+          ./cartool/build/Release/cartool "$FILE" output_images/
+
+      - name: 6. 📦 Subir Resultados (ZIP)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-VIP
+          name: Filtros-Finales
           path: output_images/
