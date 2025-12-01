@@ -1,4 +1,4 @@
-name: Extractor V9 (El Tanque)
+name: Extractor V10 (Vía Homebrew)
 
 on: [push]
 
@@ -10,35 +10,22 @@ jobs:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Descargar Herramienta (Fuerza Bruta)
+      - name: 2. 🍺 Instalar Cartool desde Homebrew
         run: |
-          echo "Intentando descargar ZIP..."
-          # Usamos la URL corta que redirige automáticamente al archivo correcto
-          curl -L -o tool.zip "https://github.com/0xced/cartool/archive/master.zip"
+          echo "Conectando con la tienda de fórmulas..."
+          # Añadimos el repositorio de fórmulas de Keith (muy famoso en iOS dev)
+          brew tap keith/formulae
           
-          # DIAGNÓSTICO: Verificamos cuánto pesa el archivo
-          SIZE=$(wc -c < tool.zip | xargs)
-          echo "El archivo descargado pesa: $SIZE bytes"
+          echo "Instalando cartool..."
+          # Instalamos la herramienta ya compilada.
+          # Homebrew maneja los espejos de descarga automáticamente.
+          brew install cartool
           
-          # Si pesa menos de 1000 bytes, es un error de texto (como el 404)
-          if [ "$SIZE" -lt 1000 ]; then
-            echo "❌ ERROR: La descarga falló. Contenido del archivo:"
-            cat tool.zip
-            exit 1
-          fi
-          
-          echo "✅ Descarga válida. Descomprimiendo..."
-          unzip -q tool.zip
-          
-          # Renombramos la carpeta sea cual sea su nombre
-          mv cartool-master cartool || mv cartool-main cartool
+          # Verificamos que se instaló
+          which cartool
+          cartool --version || echo "Cartool instalado correctamente"
 
-      - name: 3. 🔨 Compilar Herramienta
-        run: |
-          cd cartool
-          xcodebuild -scheme cartool -configuration Release
-
-      - name: 4. 🔍 Localizar Assets.car
+      - name: 3. 🔍 Localizar Assets.car
         id: find_file
         run: |
           # Buscamos tu archivo
@@ -46,7 +33,6 @@ jobs:
           
           if [ -z "$FILE" ]; then
             echo "❌ ERROR: No encuentro Assets.car"
-            echo "Listado de archivos:"
             ls -R
             exit 1
           fi
@@ -54,17 +40,18 @@ jobs:
           echo "found_file=$FILE" >> $GITHUB_OUTPUT
           echo "✅ Archivo encontrado: $FILE"
 
-      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
+      - name: 4. 🚀 EJECUTAR EXTRACCIÓN
         run: |
           mkdir output_images
           FILE="${{ steps.find_file.outputs.found_file }}"
           
-          echo "Extrayendo..."
-          ./cartool/build/Release/cartool "$FILE" output_images/
+          echo "Extrayendo $FILE..."
+          # Ejecutamos el comando directo (ya está en el PATH)
+          cartool "$FILE" output_images/
 
-      - name: 6. 📦 Subir Resultados
+      - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-V9
+          name: Filtros-Dazz-Originales
           path: output_images/
