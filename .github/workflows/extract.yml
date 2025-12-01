@@ -1,4 +1,4 @@
-name: Extractor V16 (Con Parche de Código)
+name: Extractor V17 (Victoria Final)
 
 on: [push]
 
@@ -15,47 +15,37 @@ jobs:
           git config --global --unset credential.helper || true
           git clone https://github.com/steventroughtonSmith/cartool.git tool_src
 
-      - name: 3. 💉 APLICAR PARCHE (Arreglar el error de compilación)
+      - name: 3. 💉 APLICAR PARCHE
         run: |
           cd tool_src/cartool
-          
-          # El error es que falta importar <ImageIO/ImageIO.h> en main.m
-          # Vamos a insertar esa línea al principio del archivo
-          
           sed -i '' '1s/^/#import <ImageIO\/ImageIO.h>\n/' main.m
-          
-          echo "Parche aplicado. Primeras líneas de main.m:"
-          head -n 5 main.m
 
-      - name: 4. 🔨 Compilar Herramienta
+      - name: 4. 🔨 COMPILAR (Forzando Ruta)
         run: |
           cd tool_src
-          # Compilamos
-          xcodebuild -scheme cartool -configuration Release
+          # TRUCO: DSTROOT y SYMROOT obligan a Xcode a dejar el archivo aquí
+          xcodebuild -scheme cartool -configuration Release clean build SYMROOT="build"
 
-      - name: 5. 🔍 Localizar Assets.car
-        id: find_file
-        run: |
-          FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
-          if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro Assets.car"
-            ls -R
-            exit 1
-          fi
-          echo "found_file=$FILE" >> $GITHUB_OUTPUT
-          echo "✅ Archivo encontrado: $FILE"
-
-      - name: 6. 🚀 EJECUTAR EXTRACCIÓN
+      - name: 5. 🔍 EJECUTAR EXTRACCIÓN
         run: |
           mkdir output_images
-          FILE="${{ steps.find_file.outputs.found_file }}"
           
-          echo "Extrayendo..."
-          ./tool_src/build/Release/cartool "$FILE" output_images/
+          # Buscamos tu archivo
+          FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
+          
+          echo "Usando archivo: $FILE"
+          
+          # Buscamos dónde demonios dejó Xcode la herramienta
+          TOOL=$(find tool_src -name "cartool" -type f -perm +0111 | head -n 1)
+          
+          echo "Herramienta encontrada en: $TOOL"
+          
+          # Ejecutamos
+          "$TOOL" "$FILE" output_images/
 
-      - name: 7. 📦 Subir Resultados
+      - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Parcheados
+          name: Filtros-Dazz-Originales
           path: output_images/
