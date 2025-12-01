@@ -1,4 +1,4 @@
-name: Extractor V24 (Modo Agresivo)
+name: Extractor V25 (Modo RAW DATA)
 
 on: [push]
 
@@ -15,21 +15,21 @@ jobs:
           cat <<EOF > main.m
           #import <Foundation/Foundation.h>
           #import <CoreGraphics/CoreGraphics.h>
-          #import <ImageIO/ImageIO.h>
           #import <CoreServices/CoreServices.h>
 
-          // --- INTERFACES PRIVADAS ---
+          // Interfaces privadas necesarias
           @interface CUICatalog : NSObject
           -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
           -(id)allImageNames;
           -(NSArray *)imagesWithName:(NSString *)n;
           @end
 
+          // Aquí está la clave: CUIThemeRendition tiene métodos para sacar DATA
           @interface CUIThemeRendition : NSObject
           -(NSString *)name;
-          -(CGImageRef)uncroppedImage; // Método 1
-          -(CGImageRef)image;          // Método 2
-          -(NSData *)data;             // Método 3 (Raw data)
+          -(NSData *)data;       // Método para datos crudos
+          -(id)csiData;          // Método alternativo para estructura interna
+          -(CGImageRef)uncroppedImage;
           @end
 
           int main(int argc, const char * argv[]) {
@@ -41,92 +41,67 @@ jobs:
                   
                   [[NSFileManager defaultManager] createDirectoryAtPath:outputDir withIntermediateDirectories:YES attributes:nil error:nil];
 
-                  printf("--- INICIANDO EXTRACCIÓN ---\n");
+                  printf("--- MODO RAW DATA ---\n");
                   
-                  NSError *error = nil;
                   NSBundle *bundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/CoreUI.framework"];
                   [bundle load];
 
                   NSURL *url = [NSURL fileURLWithPath:carPath];
-                  id catalog = [[NSClassFromString(@"CUICatalog") alloc] initWithURL:url error:&error];
+                  id catalog = [[NSClassFromString(@"CUICatalog") alloc] initWithURL:url error:nil];
 
                   if (!catalog) {
-                      printf("❌ Error abriendo catálogo: %s\n", [[error description] UTF8String]);
+                      printf("❌ Error abriendo catálogo.\n");
                       return 1;
                   }
 
                   NSArray *names = [catalog allImageNames];
-                  printf("📊 Total en índice: %lu imágenes.\n", (unsigned long)[names count]);
-
                   int exportedCount = 0;
 
                   for (NSString *name in names) {
-                      printf("🔍 Procesando: %s ... ", [name UTF8String]);
+                      // Limpiar nombre
+                      NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+                      printf("Procesando: %s ... ", [cleanName UTF8String]);
                       
                       @try {
                           NSArray *renditions = [catalog imagesWithName:name];
                           if (!renditions || [renditions count] == 0) {
-                              printf("Sin variantes.\n");
+                              printf("Vacío.\n");
                               continue;
                           }
 
-                          // Tomamos la primera variante (rendition)
                           id rendition = renditions[0];
-                          CGImageRef imageRef = nil;
+                          BOOL saved = NO;
 
-                          // INTENTO 1: uncroppedImage
-                          if ([rendition respondsToSelector:@selector(uncroppedImage)]) {
-                              imageRef = [rendition uncroppedImage];
+                          // ESTRATEGIA 1: Intentar sacar el bloque de datos crudo (CSIData)
+                          // Esto suele contener el LUT comprimido
+                          if ([rendition respondsToSelector:@selector(csiData)]) {
+                              NSData *rawData = [rendition csiData];
+                              if (rawData && [rawData length] > 0) {
+                                  NSString *fileName = [NSString stringWithFormat:@"%@/%@.csi", outputDir, cleanName];
+                                  [rawData writeToFile:fileName atomically:YES];
+                                  printf("✅ Guardado (.csi) - %lu bytes\n", (unsigned long)[rawData length]);
+                                  saved = YES;
+                              }
+                          }
+
+                          // ESTRATEGIA 2: Si falla, intentar 'data' genérico
+                          if (!saved && [rendition respondsToSelector:@selector(data)]) {
+                              NSData *rawData = [rendition data];
+                              if (rawData && [rawData length] > 0) {
+                                  NSString *fileName = [NSString stringWithFormat:@"%@/%@.bin", outputDir, cleanName];
+                                  [rawData writeToFile:fileName atomically:YES];
+                                  printf("✅ Guardado (.bin) - %lu bytes\n", (unsigned long)[rawData length]);
+                                  saved = YES;
+                              }
                           }
                           
-                          // INTENTO 2: image (fallback)
-                          if (!imageRef && [rendition respondsToSelector:@selector(image)]) {
-                              imageRef = [rendition image];
-                          }
-
-                          if (imageRef) {
-                              // Guardar como PNG
-                              NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
-                              NSString *fileName = [NSString stringWithFormat:@"%@/%@.png", outputDir, cleanName];
-                              NSURL *fileURL = [NSURL fileURLWithPath:fileName];
-                              
-                              CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, (CFStringRef)@"public.png", 1, NULL);
-                              
-                              if (destination) {
-                                  CGImageDestinationAddImage(destination, imageRef, nil);
-                                  if (CGImageDestinationFinalize(destination)) {
-                                      printf("✅ OK (PNG)\n");
-                                      exportedCount++;
-                                  } else {
-                                      printf("❌ Fallo al escribir archivo.\n");
-                                  }
-                                  CFRelease(destination);
-                              }
-                          } else {
-                              printf("⚠️ No se pudo obtener imagen (es nula).\n");
-                              
-                              // INTENTO 3: Datos crudos (RAW DATA)
-                              // Si no es una imagen normal, a lo mejor es un PDF o datos crudos
-                              /*
-                              if ([rendition respondsToSelector:@selector(data)]) {
-                                  NSData *data = [rendition data];
-                                  if (data) {
-                                      NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
-                                      NSString *fileName = [NSString stringWithFormat:@"%@/%@.bin", outputDir, cleanName];
-                                      [data writeToFile:fileName atomically:YES];
-                                      printf("💾 Guardado como binario (.bin)\n");
-                                      exportedCount++;
-                                  }
-                              }
-                              */
-                          }
+                          if (!saved) printf("⚠️ No se encontraron datos extraíbles.\n");
+                          else exportedCount++;
 
                       } @catch (NSException *e) {
-                          printf("💥 Excepción: %s\n", [[e reason] UTF8String]);
+                          printf("Error.\n");
                       }
                   }
-                  
-                  printf("--- RESUMEN: Exportados %d de %lu ---\n", exportedCount, (unsigned long)[names count]);
               }
               return 0;
           }
@@ -137,7 +112,6 @@ jobs:
           clang -o extractor main.m -fobjc-arc \
             -framework Foundation \
             -framework CoreGraphics \
-            -framework ImageIO \
             -framework CoreServices \
             -F /System/Library/PrivateFrameworks \
             -framework CoreUI
@@ -145,16 +119,11 @@ jobs:
       - name: 4. 🚀 Extraer
         run: |
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
-          echo "Archivo: $FILE"
-          
           ./extractor "$FILE" output_images/
-          
-          echo "Listado de archivos generados:"
-          ls -l output_images/
 
       - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-V24
+          name: Datos-Crudos-Dazz
           path: output_images/
