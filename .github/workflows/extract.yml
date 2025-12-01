@@ -1,4 +1,4 @@
-name: Extractor V13 (Clon Autenticado)
+name: Extractor V14 (Vía API)
 
 on: [push]
 
@@ -6,36 +6,54 @@ jobs:
   extract_assets:
     runs-on: macos-latest
     permissions:
-      contents: write # Damos permisos explícitos al token
+      contents: write
 
     steps:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Clonar Herramienta con TOKEN
+      - name: 2. 🛠 Descargar Cartool (Vía API)
         env:
-          # Usamos el token secreto interno de GitHub
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Clonando con autenticación inyectada..."
+          echo "Solicitando código a la API de GitHub..."
           
-          # TRUCO: Inyectamos 'x-access-token' en la URL.
-          # Esto evita el prompt de usuario/contraseña.
-          git clone https://x-access-token:${GH_TOKEN}@github.com/0xced/cartool.git cartool_src
+          # Usamos la API para pedir el ZIP (zipball).
+          # Esto es mucho más estable que git clone.
+          curl -L \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -o cartool.zip \
+            https://api.github.com/repos/0xced/cartool/zipball/master
           
-          # Movemos la carpeta
-          mv cartool_src cartool
+          # Verificamos tamaño (para evitar el error de 9 bytes)
+          SIZE=$(wc -c < cartool.zip | xargs)
+          echo "Tamaño del archivo: $SIZE bytes"
+          
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "❌ ERROR: La API rechazó la descarga."
+            cat cartool.zip
+            exit 1
+          fi
+
+          echo "✅ Descarga correcta. Descomprimiendo..."
+          unzip -q cartool.zip
+          
+          # Al bajar por API, la carpeta tiene un nombre raro con el hash (ej. 0xced-cartool-a1b2c3)
+          # La buscamos y la renombramos
+          DIR_NAME=$(find . -maxdepth 1 -type d -name "*cartool*" | head -n 1)
+          mv "$DIR_NAME" cartool
 
       - name: 3. 🔨 Compilar Herramienta
         run: |
           cd cartool
-          # Compilamos
+          echo "Compilando..."
           xcodebuild -scheme cartool -configuration Release
 
       - name: 4. 🔍 Localizar Assets.car
         id: find_file
         run: |
-          # Buscamos tu archivo (ignorando mayúsculas)
+          # Buscamos tu archivo donde sea
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
@@ -53,13 +71,11 @@ jobs:
           FILE="${{ steps.find_file.outputs.found_file }}"
           
           echo "Extrayendo $FILE..."
-          
-          # Ejecutamos la herramienta
           ./cartool/build/Release/cartool "$FILE" output_images/
 
       - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Extraidos-Final
+          name: Filtros-Dazz-Final
           path: output_images/
