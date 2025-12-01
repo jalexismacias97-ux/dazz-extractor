@@ -1,4 +1,4 @@
-name: Extractor V21 (Sintaxis Corregida)
+name: Extractor V22 (Inyección de Código Total)
 
 on: [push]
 
@@ -7,77 +7,137 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - name: 1. Descargar Archivos del Repo
+      - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. Preparar, Compilar y Extraer
+      - name: 2. 🏗️ Crear el código del extractor
         run: |
-          # --- ZONA DE CONFIGURACIÓN ---
-          TOOL_ZIP="tool.zip"
-          OUTPUT_DIR="output_images"
-          mkdir -p "$OUTPUT_DIR"
+          # Vamos a crear el archivo main.m 'de la nada' con el código fuente
+          # Esto elimina la necesidad de descargar herramientas externas.
           
-          # 1. VERIFICAR ARCHIVOS
-          echo "🔍 Buscando archivos..."
+          cat <<EOF > main.m
+          #import <Foundation/Foundation.h>
+          #import <CoreGraphics/CoreGraphics.h>
+          #import <ImageIO/ImageIO.h>
+
+          // Definiciones para engañar al compilador y usar APIs privadas
+          @interface CUICommonAssetStorage : NSObject
+          -(instancetype)initWithPath:(NSString *)p;
+          -(NSArray *)allAssetKeys;
+          -(NSArray *)allRenditionNames;
+          @end
+
+          @interface CUICatalog : NSObject
+          -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
+          -(id)allImageNames;
+          -(NSArray *)imagesWithName:(NSString *)n;
+          @end
+
+          @interface CUIStructuredThemeStore : NSObject
+          -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
+          @end
+
+          @interface CUIThemeRendition : NSObject
+          -(NSString *)name;
+          -(CGImageRef)uncroppedImage;
+          -(NSData *)data;
+          @end
+
+          int main(int argc, const char * argv[]) {
+              @autoreleasepool {
+                  if (argc < 3) {
+                      printf("Uso: ./extractor <archivo.car> <carpeta_destino>\n");
+                      return 1;
+                  }
+
+                  NSString *carPath = [NSString stringWithUTF8String:argv[1]];
+                  NSString *outputDir = [NSString stringWithUTF8String:argv[2]];
+                  
+                  // Crear carpeta destino
+                  [[NSFileManager defaultManager] createDirectoryAtPath:outputDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+                  printf("Abriendo: %s\n", [carPath UTF8String]);
+                  
+                  NSError *error = nil;
+                  // Cargar la librería privada CoreUI
+                  NSBundle *bundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/CoreUI.framework"];
+                  [bundle load];
+
+                  // Intentar abrir el catálogo
+                  NSURL *url = [NSURL fileURLWithPath:carPath];
+                  CUICatalog *catalog = [[NSClassFromString(@"CUICatalog") alloc] initWithURL:url error:&error];
+
+                  if (!catalog) {
+                      printf("Error abriendo el .car: %s\n", [[error description] UTF8String]);
+                      return 1;
+                  }
+
+                  // Obtener nombres de imágenes
+                  NSArray *names = [catalog allImageNames];
+                  printf("Encontradas %lu imágenes.\n", (unsigned long)[names count]);
+
+                  for (NSString *name in names) {
+                      @try {
+                          // Obtener todas las variantes de esa imagen
+                          NSArray *images = [catalog imagesWithName:name];
+                          
+                          for (id rendition in images) {
+                              // Extraer CGImage (mapa de bits)
+                              if ([rendition respondsToSelector:@selector(uncroppedImage)]) {
+                                  CGImageRef imageRef = [rendition uncroppedImage];
+                                  if (imageRef) {
+                                      NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+                                      NSString *fileName = [NSString stringWithFormat:@"%@/%@.png", outputDir, cleanName];
+                                      
+                                      NSURL *fileURL = [NSURL fileURLWithPath:fileName];
+                                      CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, kUTTypePNG, 1, NULL);
+                                      
+                                      if (destination) {
+                                          CGImageDestinationAddImage(destination, imageRef, nil);
+                                          if (CGImageDestinationFinalize(destination)) {
+                                              printf("Exportado: %s\n", [cleanName UTF8String]);
+                                          }
+                                          CFRelease(destination);
+                                      }
+                                  }
+                              }
+                          }
+                      } @catch (NSException *exception) {
+                          printf("Error con %s\n", [name UTF8String]);
+                      }
+                  }
+              }
+              return 0;
+          }
+          EOF
+
+      - name: 3. 🔨 Compilar Herramienta
+        run: |
+          echo "Compilando extractor..."
+          # Usamos clang directamente. Sin xcodebuild, sin proyectos complejos.
+          # Linkeamos contra las librerías privadas necesarias.
           
-          # Buscar Assets.car (mayúscula o minúscula)
-          CAR_FILE=$(find . -maxdepth 2 -name "[Aa]ssets.car" | head -n 1)
+          clang -o extractor main.m -fobjc-arc -framework Foundation -framework CoreGraphics -framework ImageIO -F /System/Library/PrivateFrameworks -framework CoreUI
+
+      - name: 4. 🔍 Localizar y Extraer
+        run: |
+          # Buscar tu archivo .car
+          FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
-          if [ -z "$CAR_FILE" ]; then
-            echo "❌ ERROR: No encuentro el archivo Assets.car en tu repositorio."
-            echo "Asegúrate de haberlo subido."
+          if [ -z "$FILE" ]; then
+            echo "❌ ERROR: No encuentro Assets.car"
+            ls -R
             exit 1
           fi
-          echo "✅ Encontrado: $CAR_FILE"
+          
+          echo "✅ Archivo encontrado: $FILE"
+          
+          # EJECUTAR NUESTRO PROGRAMA
+          ./extractor "$FILE" output_images/
 
-          if [ ! -f "$TOOL_ZIP" ]; then
-            echo "❌ ERROR: No encuentro tool.zip."
-            echo "Por favor descarga el ZIP, llámalo tool.zip y súbelo al repo."
-            exit 1
-          fi
-          echo "✅ Encontrado: $TOOL_ZIP"
-
-          # 2. DESCOMPRIMIR HERRAMIENTA
-          echo "🛠 Descomprimiendo herramienta..."
-          unzip -q "$TOOL_ZIP"
-          
-          # Detectar nombre de la carpeta (suele ser cartool-master)
-          TOOL_DIR=$(find . -maxdepth 1 -type d -name "cartool*" | head -n 1)
-          mv "$TOOL_DIR" tool_src
-          
-          # 3. PARCHE DE CÓDIGO (Para que compile en Macs nuevas)
-          if [ -f "tool_src/cartool/main.m" ]; then
-             echo "💉 Aplicando parche de código..."
-             sed -i '' '1s/^/#import <ImageIO\/ImageIO.h>\n/' tool_src/cartool/main.m
-          fi
-
-          # 4. COMPILAR
-          echo "🔨 Compilando..."
-          cd tool_src
-          xcodebuild -scheme cartool -configuration Release > /dev/null
-          cd ..
-          
-          # 5. BUSCAR EL EJECUTABLE GENERADO
-          # Buscamos el archivo 'cartool' dentro de la carpeta tool_src
-          TOOL_BIN=$(find tool_src -type f -name "cartool" -perm +0111 | grep "Release" | head -n 1)
-          
-          if [ -z "$TOOL_BIN" ]; then
-             echo "❌ ERROR DE COMPILACIÓN: No se generó el ejecutable."
-             exit 1
-          fi
-          
-          echo "✅ Herramienta lista en: $TOOL_BIN"
-
-          # 6. EJECUTAR EXTRACCIÓN
-          echo "🚀 EXTRAYENDO IMÁGENES..."
-          "$TOOL_BIN" "$CAR_FILE" "$OUTPUT_DIR/"
-          
-          echo "--- PROCESO TERMINADO ---"
-          ls -l "$OUTPUT_DIR/" | head -n 10
-
-      - name: 3. Subir ZIP Final
+      - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales
+          name: Filtros-Dazz-Extraidos
           path: output_images/
