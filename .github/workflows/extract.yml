@@ -1,51 +1,61 @@
-name: Extractor V17 (Victoria Final)
+name: Extractor V18 (Nativo de Apple)
 
 on: [push]
 
 jobs:
-  extract_assets:
+  extract_assets_apple:
     runs-on: macos-latest
 
     steps:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Clonar Herramienta
+      - name: 2. 🔍 Localizar Assets.car
+        id: find_file
         run: |
-          git config --global --unset credential.helper || true
-          git clone https://github.com/steventroughtonSmith/cartool.git tool_src
-
-      - name: 3. 💉 APLICAR PARCHE
-        run: |
-          cd tool_src/cartool
-          sed -i '' '1s/^/#import <ImageIO\/ImageIO.h>\n/' main.m
-
-      - name: 4. 🔨 COMPILAR (Forzando Ruta)
-        run: |
-          cd tool_src
-          # TRUCO: DSTROOT y SYMROOT obligan a Xcode a dejar el archivo aquí
-          xcodebuild -scheme cartool -configuration Release clean build SYMROOT="build"
-
-      - name: 5. 🔍 EJECUTAR EXTRACCIÓN
-        run: |
-          mkdir output_images
-          
-          # Buscamos tu archivo
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
-          
-          echo "Usando archivo: $FILE"
-          
-          # Buscamos dónde demonios dejó Xcode la herramienta
-          TOOL=$(find tool_src -name "cartool" -type f -perm +0111 | head -n 1)
-          
-          echo "Herramienta encontrada en: $TOOL"
-          
-          # Ejecutamos
-          "$TOOL" "$FILE" output_images/
+          if [ -z "$FILE" ]; then
+            echo "❌ ERROR: No encuentro Assets.car"
+            exit 1
+          fi
+          echo "found_file=$FILE" >> $GITHUB_OUTPUT
+          echo "✅ Archivo encontrado: $FILE"
 
-      - name: 6. 📦 Subir Resultados
+      - name: 3. 🍏 Usar assetutil (Info)
+        run: |
+          FILE="${{ steps.find_file.outputs.found_file }}"
+          
+          echo "Analizando estructura con herramienta oficial..."
+          # Esto nos dirá si el archivo está corrupto o es válido
+          xcrun assetutil --info "$FILE" > info.json
+          
+          echo "Primeras 20 líneas del JSON:"
+          head -n 20 info.json
+
+      - name: 4. 🛠 INTENTO DE RESCATE (AceExtractor Swift)
+        run: |
+          # Si cartool falló, probamos una herramienta Swift más moderna
+          # que suele manejar mejor los formatos nuevos
+          
+          echo "Clonando AceExtractor (Swift)..."
+          git clone https://github.com/1024jp/AceExtractor.git ace_tool
+          
+          cd ace_tool
+          echo "Compilando con Swift..."
+          swift build -c release
+          
+          # Buscamos el ejecutable
+          ACE_BIN=$(swift build -c release --show-bin-path)/ace-extractor
+          
+          echo "Ejecutando AceExtractor..."
+          mkdir ../output_images
+          FILE="../${{ steps.find_file.outputs.found_file }}"
+          
+          "$ACE_BIN" "$FILE" ../output_images/
+
+      - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Originales
+          name: Filtros-Dazz-Swift
           path: output_images/
