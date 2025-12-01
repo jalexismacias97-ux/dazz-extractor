@@ -1,4 +1,4 @@
-name: Extractor V23 (Linker Fix)
+name: Extractor V24 (Modo Agresivo)
 
 on: [push]
 
@@ -16,9 +16,9 @@ jobs:
           #import <Foundation/Foundation.h>
           #import <CoreGraphics/CoreGraphics.h>
           #import <ImageIO/ImageIO.h>
-          #import <CoreServices/CoreServices.h> // Añadido header faltante
+          #import <CoreServices/CoreServices.h>
 
-          // --- DEFINICIONES DE API PRIVADA (CoreUI) ---
+          // --- INTERFACES PRIVADAS ---
           @interface CUICatalog : NSObject
           -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
           -(id)allImageNames;
@@ -27,85 +27,113 @@ jobs:
 
           @interface CUIThemeRendition : NSObject
           -(NSString *)name;
-          -(CGImageRef)uncroppedImage;
+          -(CGImageRef)uncroppedImage; // Método 1
+          -(CGImageRef)image;          // Método 2
+          -(NSData *)data;             // Método 3 (Raw data)
           @end
 
           int main(int argc, const char * argv[]) {
               @autoreleasepool {
-                  if (argc < 3) {
-                      printf("Uso: ./extractor <archivo.car> <carpeta_destino>\n");
-                      return 1;
-                  }
+                  if (argc < 3) return 1;
 
                   NSString *carPath = [NSString stringWithUTF8String:argv[1]];
                   NSString *outputDir = [NSString stringWithUTF8String:argv[2]];
                   
-                  // Crear carpeta destino
                   [[NSFileManager defaultManager] createDirectoryAtPath:outputDir withIntermediateDirectories:YES attributes:nil error:nil];
 
-                  printf("Abriendo: %s\n", [carPath UTF8String]);
+                  printf("--- INICIANDO EXTRACCIÓN ---\n");
                   
                   NSError *error = nil;
-                  
-                  // CARGAR COREUI MANUALMENTE
                   NSBundle *bundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/CoreUI.framework"];
-                  if (![bundle load]) {
-                      printf("Error: No se pudo cargar CoreUI.framework\n");
-                      return 1;
-                  }
+                  [bundle load];
 
-                  // ABRIR CATÁLOGO
                   NSURL *url = [NSURL fileURLWithPath:carPath];
-                  Class CUICatalogClass = NSClassFromString(@"CUICatalog");
-                  id catalog = [[CUICatalogClass alloc] initWithURL:url error:&error];
+                  id catalog = [[NSClassFromString(@"CUICatalog") alloc] initWithURL:url error:&error];
 
                   if (!catalog) {
-                      printf("Error abriendo el .car (formato inválido o corrupto).\n");
+                      printf("❌ Error abriendo catálogo: %s\n", [[error description] UTF8String]);
                       return 1;
                   }
 
-                  // OBTENER IMÁGENES
                   NSArray *names = [catalog allImageNames];
-                  printf("Encontradas %lu imágenes.\n", (unsigned long)[names count]);
+                  printf("📊 Total en índice: %lu imágenes.\n", (unsigned long)[names count]);
+
+                  int exportedCount = 0;
 
                   for (NSString *name in names) {
+                      printf("🔍 Procesando: %s ... ", [name UTF8String]);
+                      
                       @try {
                           NSArray *renditions = [catalog imagesWithName:name];
+                          if (!renditions || [renditions count] == 0) {
+                              printf("Sin variantes.\n");
+                              continue;
+                          }
+
+                          // Tomamos la primera variante (rendition)
+                          id rendition = renditions[0];
+                          CGImageRef imageRef = nil;
+
+                          // INTENTO 1: uncroppedImage
+                          if ([rendition respondsToSelector:@selector(uncroppedImage)]) {
+                              imageRef = [rendition uncroppedImage];
+                          }
                           
-                          for (id rendition in renditions) {
-                              if ([rendition respondsToSelector:@selector(uncroppedImage)]) {
-                                  CGImageRef imageRef = [rendition uncroppedImage];
-                                  
-                                  if (imageRef) {
+                          // INTENTO 2: image (fallback)
+                          if (!imageRef && [rendition respondsToSelector:@selector(image)]) {
+                              imageRef = [rendition image];
+                          }
+
+                          if (imageRef) {
+                              // Guardar como PNG
+                              NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
+                              NSString *fileName = [NSString stringWithFormat:@"%@/%@.png", outputDir, cleanName];
+                              NSURL *fileURL = [NSURL fileURLWithPath:fileName];
+                              
+                              CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, (CFStringRef)@"public.png", 1, NULL);
+                              
+                              if (destination) {
+                                  CGImageDestinationAddImage(destination, imageRef, nil);
+                                  if (CGImageDestinationFinalize(destination)) {
+                                      printf("✅ OK (PNG)\n");
+                                      exportedCount++;
+                                  } else {
+                                      printf("❌ Fallo al escribir archivo.\n");
+                                  }
+                                  CFRelease(destination);
+                              }
+                          } else {
+                              printf("⚠️ No se pudo obtener imagen (es nula).\n");
+                              
+                              // INTENTO 3: Datos crudos (RAW DATA)
+                              // Si no es una imagen normal, a lo mejor es un PDF o datos crudos
+                              /*
+                              if ([rendition respondsToSelector:@selector(data)]) {
+                                  NSData *data = [rendition data];
+                                  if (data) {
                                       NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
-                                      NSString *fileName = [NSString stringWithFormat:@"%@/%@.png", outputDir, cleanName];
-                                      NSURL *fileURL = [NSURL fileURLWithPath:fileName];
-                                      
-                                      // CORRECCIÓN AQUÍ: Usamos string literal @"public.png" para evitar el error de kUTTypePNG
-                                      CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, (CFStringRef)@"public.png", 1, NULL);
-                                      
-                                      if (destination) {
-                                          CGImageDestinationAddImage(destination, imageRef, nil);
-                                          CGImageDestinationFinalize(destination);
-                                          CFRelease(destination);
-                                          printf("Exportado: %s\n", [cleanName UTF8String]);
-                                      }
+                                      NSString *fileName = [NSString stringWithFormat:@"%@/%@.bin", outputDir, cleanName];
+                                      [data writeToFile:fileName atomically:YES];
+                                      printf("💾 Guardado como binario (.bin)\n");
+                                      exportedCount++;
                                   }
                               }
+                              */
                           }
+
                       } @catch (NSException *e) {
-                          // Ignorar errores puntuales
+                          printf("💥 Excepción: %s\n", [[e reason] UTF8String]);
                       }
                   }
+                  
+                  printf("--- RESUMEN: Exportados %d de %lu ---\n", exportedCount, (unsigned long)[names count]);
               }
               return 0;
           }
           EOF
 
-      - name: 3. 🔨 Compilar Herramienta (Con todas las librerías)
+      - name: 3. 🔨 Compilar
         run: |
-          echo "Compilando extractor..."
-          # AÑADIMOS -framework CoreServices para que el Linker esté feliz
           clang -o extractor main.m -fobjc-arc \
             -framework Foundation \
             -framework CoreGraphics \
@@ -114,23 +142,19 @@ jobs:
             -F /System/Library/PrivateFrameworks \
             -framework CoreUI
 
-      - name: 4. 🔍 Localizar y Extraer
+      - name: 4. 🚀 Extraer
         run: |
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
+          echo "Archivo: $FILE"
           
-          if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro Assets.car"
-            exit 1
-          fi
-          
-          echo "✅ Archivo encontrado: $FILE"
-          
-          # Ejecutar
           ./extractor "$FILE" output_images/
+          
+          echo "Listado de archivos generados:"
+          ls -l output_images/
 
       - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-V23
+          name: Filtros-Dazz-V24
           path: output_images/
