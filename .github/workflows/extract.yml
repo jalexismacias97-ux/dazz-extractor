@@ -1,58 +1,56 @@
-name: Extractor V4 (Blindado)
+name: Extractor V5 (Estrategia Doble Checkout)
 
 on: [push]
 
 jobs:
   extract_assets:
     runs-on: macos-latest
-    permissions:
-      contents: read
 
     steps:
-      - name: 1. Descargar tu repositorio
+      # PASO 1: Bajamos TU archivo Assets.car
+      - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
+        with:
+          path: mi_repo_dazz
 
-      - name: 2. 🛠 Descargar herramienta (Vía GH CLI + Token)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Usamos la herramienta oficial con tus credenciales temporales
-          # Esto EVITA el error de "Device not configured" y el error del ZIP corrupto
-          gh repo clone 0xced/cartool cartool_folder
-          mv cartool_folder cartool
+      # PASO 2: Bajamos la herramienta Cartool (Usando la acción oficial, imposible que falle)
+      - name: 2. Descargar Herramienta Cartool
+        uses: actions/checkout@v3
+        with:
+          repository: 0xced/cartool
+          path: herramienta_cartool
 
-      - name: 3. 🔨 Compilar herramienta
+      # PASO 3: Compilar la herramienta
+      - name: 3. Compilar Herramienta
         run: |
-          cd cartool
+          cd herramienta_cartool
           xcodebuild -scheme cartool -configuration Release
 
-      - name: 4. 🔍 Localizar Assets.car
-        id: find_file
-        run: |
-          # Buscamos el archivo ignorando mayúsculas/minúsculas
-          FILE=$(find . -maxdepth 2 -type f -name "[Aa]ssets.car" | head -n 1)
-          
-          if [ -z "$FILE" ]; then
-             echo "❌ NO ENCUENTRO EL ARCHIVO Assets.car"
-             echo "Archivos disponibles:"
-             ls -R
-             exit 1
-          fi
-          
-          echo "found_file=$FILE" >> $GITHUB_OUTPUT
-          echo "✅ Archivo encontrado: $FILE"
-
-      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
+      # PASO 4: Ejecutar la extracción
+      - name: 4. Ejecutar Extracción
         run: |
           mkdir output_images
-          FILE="${{ steps.find_file.outputs.found_file }}"
           
-          # Ejecutamos la herramienta
-          ./cartool/build/Release/cartool "$FILE" output_images/
+          # Buscamos TU archivo dentro de la carpeta que bajamos en el paso 1
+          FILE=$(find mi_repo_dazz -type f -name "[Aa]ssets.car" | head -n 1)
+          
+          if [ -z "$FILE" ]; then
+            echo "❌ ERROR: No encuentro Assets.car dentro de la carpeta descargada."
+            echo "Contenido de la carpeta:"
+            ls -R mi_repo_dazz
+            exit 1
+          fi
+          
+          echo "✅ Archivo encontrado: $FILE"
+          
+          # Ejecutamos la herramienta que compilamos en el paso 3
+          # La ruta al ejecutable es: carpeta_herramienta/build/Release/cartool
+          ./herramienta_cartool/build/Release/cartool "$FILE" output_images/
 
-      - name: 6. 📦 Subir Resultados (ZIP)
+      # PASO 5: Subir el ZIP
+      - name: 5. Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales
+          name: Filtros-Finales-V5
           path: output_images/
