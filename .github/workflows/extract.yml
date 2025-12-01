@@ -1,4 +1,4 @@
-name: Extractor V8 (Git Limpio)
+name: Extractor V9 (El Tanque)
 
 on: [push]
 
@@ -10,34 +10,45 @@ jobs:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Clonar Herramienta (Modo Ingeniero)
+      - name: 2. 🛠 Descargar Herramienta (Fuerza Bruta)
         run: |
-          # TRUCO MAESTRO: Desactivamos el gestor de contraseñas de la Mac
-          # Esto evita el error "Device not configured"
-          git config --global --unset credential.helper
+          echo "Intentando descargar ZIP..."
+          # Usamos la URL corta que redirige automáticamente al archivo correcto
+          curl -L -o tool.zip "https://github.com/0xced/cartool/archive/master.zip"
           
-          # Clonamos el repositorio público sin credenciales
-          git clone https://github.com/0xced/cartool.git cartool_src
+          # DIAGNÓSTICO: Verificamos cuánto pesa el archivo
+          SIZE=$(wc -c < tool.zip | xargs)
+          echo "El archivo descargado pesa: $SIZE bytes"
           
-          # Entramos en la carpeta
-          mv cartool_src cartool
+          # Si pesa menos de 1000 bytes, es un error de texto (como el 404)
+          if [ "$SIZE" -lt 1000 ]; then
+            echo "❌ ERROR: La descarga falló. Contenido del archivo:"
+            cat tool.zip
+            exit 1
+          fi
+          
+          echo "✅ Descarga válida. Descomprimiendo..."
+          unzip -q tool.zip
+          
+          # Renombramos la carpeta sea cual sea su nombre
+          mv cartool-master cartool || mv cartool-main cartool
 
       - name: 3. 🔨 Compilar Herramienta
         run: |
           cd cartool
-          # Compilamos
           xcodebuild -scheme cartool -configuration Release
 
       - name: 4. 🔍 Localizar Assets.car
         id: find_file
         run: |
-          # Buscamos tu archivo donde sea que esté
+          # Buscamos tu archivo
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
-             echo "❌ ERROR: No encuentro Assets.car"
-             ls -R
-             exit 1
+            echo "❌ ERROR: No encuentro Assets.car"
+            echo "Listado de archivos:"
+            ls -R
+            exit 1
           fi
           
           echo "found_file=$FILE" >> $GITHUB_OUTPUT
@@ -48,14 +59,12 @@ jobs:
           mkdir output_images
           FILE="${{ steps.find_file.outputs.found_file }}"
           
-          echo "Extrayendo desde: $FILE"
-          
-          # Ejecutamos la herramienta
+          echo "Extrayendo..."
           ./cartool/build/Release/cartool "$FILE" output_images/
 
       - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-V8
+          name: Filtros-Finales-V9
           path: output_images/
