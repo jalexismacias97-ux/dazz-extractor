@@ -1,37 +1,30 @@
-name: Extractor V12 (Camuflaje)
+name: Extractor V13 (Clon Autenticado)
 
 on: [push]
 
 jobs:
   extract_assets:
     runs-on: macos-latest
+    permissions:
+      contents: write # Damos permisos explícitos al token
 
     steps:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Descargar Herramienta (Modo Camuflado)
+      - name: 2. 🛠 Clonar Herramienta con TOKEN
+        env:
+          # Usamos el token secreto interno de GitHub
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Descargando ZIP haciéndonos pasar por un navegador..."
+          echo "Clonando con autenticación inyectada..."
           
-          # TRUCO: Añadimos -H "User-Agent: Mozilla/5.0" para que GitHub no nos bloquee
-          # Usamos la URL completa a la rama master
-          curl -L -H "User-Agent: Mozilla/5.0" -o cartool.zip "https://github.com/0xced/cartool/archive/refs/heads/master.zip"
+          # TRUCO: Inyectamos 'x-access-token' en la URL.
+          # Esto evita el prompt de usuario/contraseña.
+          git clone https://x-access-token:${GH_TOKEN}@github.com/0xced/cartool.git cartool_src
           
-          # VERIFICACIÓN
-          SIZE=$(wc -c < cartool.zip | xargs)
-          echo "Tamaño del archivo: $SIZE bytes"
-          
-          if [ "$SIZE" -lt 1000 ]; then
-             echo "❌ ERROR: La descarga falló (GitHub nos bloqueó o el link está mal)."
-             exit 1
-          fi
-          
-          echo "✅ Descarga exitosa. Descomprimiendo..."
-          unzip -q cartool.zip
-          
-          # Renombramos la carpeta resultante
-          mv cartool-master cartool
+          # Movemos la carpeta
+          mv cartool_src cartool
 
       - name: 3. 🔨 Compilar Herramienta
         run: |
@@ -42,7 +35,7 @@ jobs:
       - name: 4. 🔍 Localizar Assets.car
         id: find_file
         run: |
-          # Buscamos tu archivo
+          # Buscamos tu archivo (ignorando mayúsculas)
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
@@ -68,5 +61,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-V12
+          name: Filtros-Extraidos-Final
           path: output_images/
