@@ -1,0 +1,32 @@
+name: Extract Assets.car
+
+on: [push]
+
+jobs:
+  extract_assets:
+    runs-on: macos-latest  # ¡Aquí está la magia! Usamos una Mac real de GitHub.
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install cartool
+        run: |
+          # Descargamos una herramienta open source para abrir .car
+          git clone https://github.com/0xced/cartool.git
+          cd cartool
+          xcodebuild -scheme cartool -configuration Release
+          # Movemos el ejecutable a una ruta accesible
+          sudo cp build/Release/cartool /usr/local/bin/
+
+      - name: Extract Assets.car
+        run: |
+          mkdir extracted_images
+          # Ejecutamos la extracción
+          cartool Assets.car extracted_images/
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: All-Filters-Extracted
+          path: extracted_images/
