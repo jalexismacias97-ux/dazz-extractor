@@ -1,57 +1,61 @@
-name: Extractor V7 (CDN Directo)
+name: Extractor V8 (Git Limpio)
 
 on: [push]
 
 jobs:
-  extract_assets_final:
+  extract_assets:
     runs-on: macos-latest
 
     steps:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Descargar Cartool (Vía CDN)
+      - name: 2. 🛠 Clonar Herramienta (Modo Ingeniero)
         run: |
-          echo "Descargando código fuente desde servidor seguro..."
-          # Usamos el servidor de carga de código (codeload) que no requiere autenticación
-          curl -L -o cartool.zip "https://codeload.github.com/0xced/cartool/zip/refs/heads/master"
+          # TRUCO MAESTRO: Desactivamos el gestor de contraseñas de la Mac
+          # Esto evita el error "Device not configured"
+          git config --global --unset credential.helper
           
-          # Verificar que bajó algo
-          ls -lh cartool.zip
+          # Clonamos el repositorio público sin credenciales
+          git clone https://github.com/0xced/cartool.git cartool_src
           
-          # Descomprimir
-          unzip -q cartool.zip
-          
-          # Renombrar la carpeta descomprimida (suele llamarse cartool-master)
-          mv cartool-master cartool
+          # Entramos en la carpeta
+          mv cartool_src cartool
 
       - name: 3. 🔨 Compilar Herramienta
         run: |
           cd cartool
-          # Compilamos la herramienta usando el Xcode de la Mac virtual
+          # Compilamos
           xcodebuild -scheme cartool -configuration Release
 
-      - name: 4. 🔍 Localizar y Extraer
+      - name: 4. 🔍 Localizar Assets.car
+        id: find_file
         run: |
-          mkdir output_images
-          
-          # Buscamos tu archivo
+          # Buscamos tu archivo donde sea que esté
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro Assets.car"
-            ls -R
-            exit 1
+             echo "❌ ERROR: No encuentro Assets.car"
+             ls -R
+             exit 1
           fi
           
+          echo "found_file=$FILE" >> $GITHUB_OUTPUT
           echo "✅ Archivo encontrado: $FILE"
+
+      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
+        run: |
+          mkdir output_images
+          FILE="${{ steps.find_file.outputs.found_file }}"
           
-          # Ejecutamos la herramienta compilada
+          echo "Extrayendo desde: $FILE"
+          
+          # Ejecutamos la herramienta
           ./cartool/build/Release/cartool "$FILE" output_images/
 
-      - name: 5. 📦 Subir Resultados
+      - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Extraidos
+          name: Filtros-Finales-V8
           path: output_images/
