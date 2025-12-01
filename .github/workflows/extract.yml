@@ -1,56 +1,92 @@
-name: Extractor V5 (Estrategia Doble Checkout)
+name: Extractor V6 (Método Python en Mac)
 
 on: [push]
 
 jobs:
-  extract_assets:
+  extract_assets_python:
     runs-on: macos-latest
 
     steps:
-      # PASO 1: Bajamos TU archivo Assets.car
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
+
+      - name: 2. Configurar Python
+        uses: actions/setup-python@v4
         with:
-          path: mi_repo_dazz
+          python-version: '3.10' 
 
-      # PASO 2: Bajamos la herramienta Cartool (Usando la acción oficial, imposible que falle)
-      - name: 2. Descargar Herramienta Cartool
-        uses: actions/checkout@v3
-        with:
-          repository: 0xced/cartool
-          path: herramienta_cartool
-
-      # PASO 3: Compilar la herramienta
-      - name: 3. Compilar Herramienta
+      - name: 3. Instalar librerías necesarias
         run: |
-          cd herramienta_cartool
-          xcodebuild -scheme cartool -configuration Release
+          # Instalamos la librería que lee archivos .car
+          pip install acefile
+          # Intentamos instalar soporte para compresión LZFSE (nativa de Apple)
+          pip install python-lzfse || true 
 
-      # PASO 4: Ejecutar la extracción
-      - name: 4. Ejecutar Extracción
+      - name: 4. 🔍 Localizar Assets.car
+        id: find_file
         run: |
-          mkdir output_images
-          
-          # Buscamos TU archivo dentro de la carpeta que bajamos en el paso 1
-          FILE=$(find mi_repo_dazz -type f -name "[Aa]ssets.car" | head -n 1)
-          
+          FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           if [ -z "$FILE" ]; then
-            echo "❌ ERROR: No encuentro Assets.car dentro de la carpeta descargada."
-            echo "Contenido de la carpeta:"
-            ls -R mi_repo_dazz
-            exit 1
+             echo "❌ ERROR: No encuentro Assets.car"
+             ls -R
+             exit 1
           fi
-          
+          echo "FILE_PATH=$FILE" >> $GITHUB_ENV
           echo "✅ Archivo encontrado: $FILE"
-          
-          # Ejecutamos la herramienta que compilamos en el paso 3
-          # La ruta al ejecutable es: carpeta_herramienta/build/Release/cartool
-          ./herramienta_cartool/build/Release/cartool "$FILE" output_images/
 
-      # PASO 5: Subir el ZIP
-      - name: 5. Subir Resultados
+      - name: 5. 🐍 Ejecutar Script de Extracción
+        run: |
+          # Creamos un pequeño script de Python ahí mismo para hacer el trabajo
+          cat <<EOF > script_extractor.py
+          import acefile
+          import os
+          import sys
+
+          input_car = "${{ env.FILE_PATH }}"
+          output_dir = "output_images"
+
+          print(f"Abriendo: {input_car}")
+
+          try:
+              os.makedirs(output_dir, exist_ok=True)
+              with open(input_car, 'rb') as f:
+                  catalog = acefile.ACECatalog.parse(f.read())
+                  
+                  print(f"Encontrados {len(catalog.assets)} recursos.")
+                  count = 0
+                  for asset in catalog.assets:
+                      # Intentamos guardar solo imágenes
+                      try:
+                          # Generamos un nombre
+                          name = asset.name if asset.name else f"asset_{count}"
+                          # Limpiamos caracteres raros
+                          name = name.replace("/", "_")
+                          
+                          # Detectamos extensión básica
+                          ext = ".png"
+                          if asset.uti == "public.jpeg": ext = ".jpg"
+                          
+                          full_path = os.path.join(output_dir, name + ext)
+                          
+                          with open(full_path, 'wb') as out:
+                              out.write(asset.data)
+                          count += 1
+                      except Exception as e:
+                          print(f"Saltando un asset: {e}")
+                          
+                  print(f"--- ÉXITO: {count} imágenes extraídas ---")
+
+          except Exception as e:
+              print(f"ERROR CRÍTICO: {e}")
+              sys.exit(1)
+          EOF
+
+          # Ejecutamos el script que acabamos de crear
+          python script_extractor.py
+
+      - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-V5
+          name: Filtros-Python-Extracted
           path: output_images/
