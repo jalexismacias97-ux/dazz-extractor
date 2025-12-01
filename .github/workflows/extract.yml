@@ -1,132 +1,61 @@
-name: Extractor "MacGyver" (Python Nativo)
+name: Extractor V16 (Con Parche de Código)
 
 on: [push]
 
 jobs:
-  extract_assets_native:
+  extract_assets:
     runs-on: macos-latest
 
     steps:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: 3. Instalar Puente Apple-Python
+      - name: 2. 🛠 Clonar Herramienta
         run: |
-          echo "Instalando puente de sistema..."
-          # Instalamos PyObjC para poder hablar con el sistema operativo Mac
-          pip install pyobjc-framework-Cocoa
-
-      - name: 4. 🐍 Crear Script de Extracción
-        run: |
-          # Creamos el script python ahí mismo. NO descargamos nada.
-          cat <<EOF > extractor_nativo.py
-          import Quartz
-          import Cocoa
-          import os
-          import sys
-          from Foundation import NSURL
-
-          # Nombre de tu archivo
-          car_file = "Assets.car"
-          output_dir = "output_images"
-
-          if not os.path.exists(car_file):
-              # Intenta buscarlo si tiene otro nombre (minúsculas)
-              if os.path.exists("assets.car"):
-                  car_file = "assets.car"
-              else:
-                  print("❌ ERROR: No encuentro Assets.car")
-                  sys.exit(1)
-
-          print(f"Abriendo {car_file} usando librerías nativas de Mac...")
-          
-          # Usamos la API privada de Apple (CUICatalog) a través de Python
-          # Esto es ingeniería inversa pura y dura.
-          CUICatalog = Cocoa.NSClassFromString("CUICatalog")
-          url = NSURL.fileURLWithPath_(car_file)
-          error = None
-          
-          # Abrir el catálogo
-          catalog, error = CUICatalog.alloc().initWithURL_error_(url, None)
-          
-          if not catalog:
-              print(f"Error abriendo catálogo: {error}")
-              sys.exit(1)
-
-          os.makedirs(output_dir, exist_ok=True)
-          
-          # Obtener todos los nombres de imágenes
-          # Nota: Dependiendo de la versión de Mac, el método cambia.
-          # Probamos varios métodos comunes.
-          images = catalog.allImageNames()
-          
-          print(f"Encontradas {len(images)} imágenes.")
-          
-          count = 0
-          for name in images:
-              try:
-                  if not name: continue
-                  
-                  # Pedir la imagen al sistema
-                  # cgImage = catalog.imageWithName_scaleFactor_(name, 1.0) # Método antiguo
-                  # Método más robusto para obtener representación:
-                  
-                  # Vamos a intentar exportar todo lo que podamos
-                  print(f"Exportando: {name}")
-                  
-                  # Truco: Usar assetutil del sistema para volcar datos si el script falla
-                  # Pero primero intentemos guardar el nombre para referencia
-                  
-                  # NOTA: Extraer los bytes exactos vía PyObjC es complejo porque la API es privada.
-                  # CAMBIO DE ESTRATEGIA EN TIEMPO REAL:
-                  # Si ya tenemos el catálogo abierto, usaremos la herramienta de sistema 'assetutil'
-                  # para convertirlo a JSON y buscar pistas, o mejor aún:
-                  pass 
-
-              except Exception as e:
-                  print(f"Error con {name}: {e}")
-          
-          EOF
-
-      - name: 5. 🚀 INTENTO FINAL (Herramienta del Sistema)
-        run: |
-          # Si el script de arriba es muy complejo, usaremos la herramienta
-          # que YA VIENE instalada en todas las Macs: assetutil
-          
-          echo "Usando herramienta nativa de Apple (assetutil)..."
-          mkdir output_images
-          
-          # 1. Buscar el archivo
-          FILE=$(find . -maxdepth 2 -name "[Aa]ssets.car" | head -n 1)
-          
-          # 2. Convertir el .car a un JSON legible para ver qué hay dentro
-          xcrun --sdk iphoneos assetutil -I "$FILE" -o info.json
-          
-          echo "Información extraída (Primeras 20 líneas):"
-          head -n 20 info.json
-          
-          # 3. EL TRUCO SUCIO:
-          # Apple no deja sacar las imágenes fácilmente con assetutil, PERO...
-          # Como este método es tan difícil, voy a usar un 'Fork' del repositorio cartool
-          # que es menos conocido y no está bloqueado.
-          
-          echo "⬇️ Intentando descarga de emergencia desde un espejo..."
+          git config --global --unset credential.helper || true
           git clone https://github.com/steventroughtonSmith/cartool.git tool_src
-          
-          cd tool_src
-          xcodebuild -scheme cartool -configuration Release
-          
-          echo "🚀 Ejecutando..."
-          ./build/Release/cartool "../$FILE" "../output_images/"
 
-      - name: 6. 📦 Subir Resultados
+      - name: 3. 💉 APLICAR PARCHE (Arreglar el error de compilación)
+        run: |
+          cd tool_src/cartool
+          
+          # El error es que falta importar <ImageIO/ImageIO.h> en main.m
+          # Vamos a insertar esa línea al principio del archivo
+          
+          sed -i '' '1s/^/#import <ImageIO\/ImageIO.h>\n/' main.m
+          
+          echo "Parche aplicado. Primeras líneas de main.m:"
+          head -n 5 main.m
+
+      - name: 4. 🔨 Compilar Herramienta
+        run: |
+          cd tool_src
+          # Compilamos
+          xcodebuild -scheme cartool -configuration Release
+
+      - name: 5. 🔍 Localizar Assets.car
+        id: find_file
+        run: |
+          FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
+          if [ -z "$FILE" ]; then
+            echo "❌ ERROR: No encuentro Assets.car"
+            ls -R
+            exit 1
+          fi
+          echo "found_file=$FILE" >> $GITHUB_OUTPUT
+          echo "✅ Archivo encontrado: $FILE"
+
+      - name: 6. 🚀 EJECUTAR EXTRACCIÓN
+        run: |
+          mkdir output_images
+          FILE="${{ steps.find_file.outputs.found_file }}"
+          
+          echo "Extrayendo..."
+          ./tool_src/build/Release/cartool "$FILE" output_images/
+
+      - name: 7. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Finales-MacGyver
+          name: Filtros-Dazz-Parcheados
           path: output_images/
