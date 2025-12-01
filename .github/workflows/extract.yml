@@ -1,4 +1,4 @@
-name: Extractor V11 (Git Robusto)
+name: Extractor V12 (Camuflaje)
 
 on: [push]
 
@@ -10,26 +10,33 @@ jobs:
       - name: 1. Descargar Tu Repositorio
         uses: actions/checkout@v3
 
-      - name: 2. 🛠 Clonar Herramienta (Modo Seguro)
+      - name: 2. 🛠 Descargar Herramienta (Modo Camuflado)
         run: |
-          echo "Preparando entorno Git..."
+          echo "Descargando ZIP haciéndonos pasar por un navegador..."
           
-          # TRUCO: "|| true" significa "Si esto falla, no pares, sigue."
-          # Esto evita el error "Exit Code 5" que tuvimos antes.
-          git config --global --unset credential.helper || true
+          # TRUCO: Añadimos -H "User-Agent: Mozilla/5.0" para que GitHub no nos bloquee
+          # Usamos la URL completa a la rama master
+          curl -L -H "User-Agent: Mozilla/5.0" -o cartool.zip "https://github.com/0xced/cartool/archive/refs/heads/master.zip"
           
-          echo "Clonando repositorio..."
-          # Clonamos el código fuente directamente
-          git clone https://github.com/0xced/cartool.git cartool_src
+          # VERIFICACIÓN
+          SIZE=$(wc -c < cartool.zip | xargs)
+          echo "Tamaño del archivo: $SIZE bytes"
           
-          # Renombramos la carpeta para facilitar el siguiente paso
-          mv cartool_src cartool
+          if [ "$SIZE" -lt 1000 ]; then
+             echo "❌ ERROR: La descarga falló (GitHub nos bloqueó o el link está mal)."
+             exit 1
+          fi
+          
+          echo "✅ Descarga exitosa. Descomprimiendo..."
+          unzip -q cartool.zip
+          
+          # Renombramos la carpeta resultante
+          mv cartool-master cartool
 
       - name: 3. 🔨 Compilar Herramienta
         run: |
           cd cartool
-          echo "Compilando..."
-          # Usamos el compilador de Mac
+          # Compilamos
           xcodebuild -scheme cartool -configuration Release
 
       - name: 4. 🔍 Localizar Assets.car
@@ -54,12 +61,12 @@ jobs:
           
           echo "Extrayendo $FILE..."
           
-          # Ejecutamos la herramienta que acabamos de compilar
+          # Ejecutamos la herramienta
           ./cartool/build/Release/cartool "$FILE" output_images/
 
       - name: 6. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Extraidos
+          name: Filtros-Dazz-V12
           path: output_images/
