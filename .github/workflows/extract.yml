@@ -1,32 +1,54 @@
-name: Extract Assets.car
+name: Extract Assets (Modo Seguro)
 
 on: [push]
 
 jobs:
   extract_assets:
-    runs-on: macos-latest  # ¡Aquí está la magia! Usamos una Mac real de GitHub.
+    runs-on: macos-latest  # Usamos la última versión para evitar problemas de compatibilidad
 
     steps:
-      - name: Checkout code
+      - name: 1. Descargar tu repositorio
         uses: actions/checkout@v3
 
-      - name: Install cartool
+      - name: 2. 🔍 Verificar dónde está el archivo
         run: |
-          # Descargamos una herramienta open source para abrir .car
-          git clone https://github.com/0xced/cartool.git
+          echo "Buscando Assets.car..."
+          find . -maxdepth 2 -name "*.car"
+          # Esto nos mostrará si el archivo se llama assets.car, Assets.car, o si está en una carpeta
+
+      - name: 3. 🛠 Descargar herramienta (Método ZIP)
+        run: |
+          # En lugar de git clone (que te dio error 128), bajamos el ZIP directo
+          curl -L https://github.com/0xced/cartool/archive/refs/heads/master.zip -o cartool.zip
+          unzip -q cartool.zip
+          mv cartool-master cartool
+
+      - name: 4. 🔨 Compilar herramienta
+        run: |
           cd cartool
           xcodebuild -scheme cartool -configuration Release
-          # Movemos el ejecutable a una ruta accesible
-          sudo cp build/Release/cartool /usr/local/bin/
 
-      - name: Extract Assets.car
+      - name: 5. 🚀 EJECUTAR EXTRACCIÓN
         run: |
-          mkdir extracted_images
-          # Ejecutamos la extracción
-          cartool Assets.car extracted_images/
+          mkdir output_images
+          
+          # Intentamos encontrar el archivo sin importar mayúsculas/minúsculas
+          FILE=$(find . -maxdepth 1 -iname "assets.car" | head -n 1)
+          
+          if [ -z "$FILE" ]; then
+            echo "❌ ERROR FATAL: No encuentro el archivo Assets.car en la raíz."
+            echo "Estos son los archivos que hay en tu repo:"
+            ls -la
+            exit 1
+          else
+            echo "✅ Archivo encontrado: $FILE"
+            # Ejecutamos la herramienta
+            ./cartool/build/Release/cartool "$FILE" output_images/
+          fi
 
-      - name: Upload Artifacts
+      - name: 6. 📦 Subir lo que encontramos
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: All-Filters-Extracted
-          path: extracted_images/
+          name: Filtros-Finales
+          path: output_images/
