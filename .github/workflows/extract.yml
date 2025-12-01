@@ -1,4 +1,4 @@
-name: Extractor V22 (Inyección de Código Total)
+name: Extractor V23 (Linker Fix)
 
 on: [push]
 
@@ -12,35 +12,22 @@ jobs:
 
       - name: 2. 🏗️ Crear el código del extractor
         run: |
-          # Vamos a crear el archivo main.m 'de la nada' con el código fuente
-          # Esto elimina la necesidad de descargar herramientas externas.
-          
           cat <<EOF > main.m
           #import <Foundation/Foundation.h>
           #import <CoreGraphics/CoreGraphics.h>
           #import <ImageIO/ImageIO.h>
+          #import <CoreServices/CoreServices.h> // Añadido header faltante
 
-          // Definiciones para engañar al compilador y usar APIs privadas
-          @interface CUICommonAssetStorage : NSObject
-          -(instancetype)initWithPath:(NSString *)p;
-          -(NSArray *)allAssetKeys;
-          -(NSArray *)allRenditionNames;
-          @end
-
+          // --- DEFINICIONES DE API PRIVADA (CoreUI) ---
           @interface CUICatalog : NSObject
           -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
           -(id)allImageNames;
           -(NSArray *)imagesWithName:(NSString *)n;
           @end
 
-          @interface CUIStructuredThemeStore : NSObject
-          -(instancetype)initWithURL:(NSURL *)url error:(NSError **)error;
-          @end
-
           @interface CUIThemeRendition : NSObject
           -(NSString *)name;
           -(CGImageRef)uncroppedImage;
-          -(NSData *)data;
           @end
 
           int main(int argc, const char * argv[]) {
@@ -59,51 +46,55 @@ jobs:
                   printf("Abriendo: %s\n", [carPath UTF8String]);
                   
                   NSError *error = nil;
-                  // Cargar la librería privada CoreUI
+                  
+                  // CARGAR COREUI MANUALMENTE
                   NSBundle *bundle = [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/CoreUI.framework"];
-                  [bundle load];
-
-                  // Intentar abrir el catálogo
-                  NSURL *url = [NSURL fileURLWithPath:carPath];
-                  CUICatalog *catalog = [[NSClassFromString(@"CUICatalog") alloc] initWithURL:url error:&error];
-
-                  if (!catalog) {
-                      printf("Error abriendo el .car: %s\n", [[error description] UTF8String]);
+                  if (![bundle load]) {
+                      printf("Error: No se pudo cargar CoreUI.framework\n");
                       return 1;
                   }
 
-                  // Obtener nombres de imágenes
+                  // ABRIR CATÁLOGO
+                  NSURL *url = [NSURL fileURLWithPath:carPath];
+                  Class CUICatalogClass = NSClassFromString(@"CUICatalog");
+                  id catalog = [[CUICatalogClass alloc] initWithURL:url error:&error];
+
+                  if (!catalog) {
+                      printf("Error abriendo el .car (formato inválido o corrupto).\n");
+                      return 1;
+                  }
+
+                  // OBTENER IMÁGENES
                   NSArray *names = [catalog allImageNames];
                   printf("Encontradas %lu imágenes.\n", (unsigned long)[names count]);
 
                   for (NSString *name in names) {
                       @try {
-                          // Obtener todas las variantes de esa imagen
-                          NSArray *images = [catalog imagesWithName:name];
+                          NSArray *renditions = [catalog imagesWithName:name];
                           
-                          for (id rendition in images) {
-                              // Extraer CGImage (mapa de bits)
+                          for (id rendition in renditions) {
                               if ([rendition respondsToSelector:@selector(uncroppedImage)]) {
                                   CGImageRef imageRef = [rendition uncroppedImage];
+                                  
                                   if (imageRef) {
                                       NSString *cleanName = [name stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
                                       NSString *fileName = [NSString stringWithFormat:@"%@/%@.png", outputDir, cleanName];
-                                      
                                       NSURL *fileURL = [NSURL fileURLWithPath:fileName];
-                                      CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, kUTTypePNG, 1, NULL);
+                                      
+                                      // CORRECCIÓN AQUÍ: Usamos string literal @"public.png" para evitar el error de kUTTypePNG
+                                      CGImageDestinationRef destination = CGImageDestinationCreateWithURL((__bridge CFURLRef)fileURL, (CFStringRef)@"public.png", 1, NULL);
                                       
                                       if (destination) {
                                           CGImageDestinationAddImage(destination, imageRef, nil);
-                                          if (CGImageDestinationFinalize(destination)) {
-                                              printf("Exportado: %s\n", [cleanName UTF8String]);
-                                          }
+                                          CGImageDestinationFinalize(destination);
                                           CFRelease(destination);
+                                          printf("Exportado: %s\n", [cleanName UTF8String]);
                                       }
                                   }
                               }
                           }
-                      } @catch (NSException *exception) {
-                          printf("Error con %s\n", [name UTF8String]);
+                      } @catch (NSException *e) {
+                          // Ignorar errores puntuales
                       }
                   }
               }
@@ -111,33 +102,35 @@ jobs:
           }
           EOF
 
-      - name: 3. 🔨 Compilar Herramienta
+      - name: 3. 🔨 Compilar Herramienta (Con todas las librerías)
         run: |
           echo "Compilando extractor..."
-          # Usamos clang directamente. Sin xcodebuild, sin proyectos complejos.
-          # Linkeamos contra las librerías privadas necesarias.
-          
-          clang -o extractor main.m -fobjc-arc -framework Foundation -framework CoreGraphics -framework ImageIO -F /System/Library/PrivateFrameworks -framework CoreUI
+          # AÑADIMOS -framework CoreServices para que el Linker esté feliz
+          clang -o extractor main.m -fobjc-arc \
+            -framework Foundation \
+            -framework CoreGraphics \
+            -framework ImageIO \
+            -framework CoreServices \
+            -F /System/Library/PrivateFrameworks \
+            -framework CoreUI
 
       - name: 4. 🔍 Localizar y Extraer
         run: |
-          # Buscar tu archivo .car
           FILE=$(find . -maxdepth 3 -type f -name "[Aa]ssets.car" | head -n 1)
           
           if [ -z "$FILE" ]; then
             echo "❌ ERROR: No encuentro Assets.car"
-            ls -R
             exit 1
           fi
           
           echo "✅ Archivo encontrado: $FILE"
           
-          # EJECUTAR NUESTRO PROGRAMA
+          # Ejecutar
           ./extractor "$FILE" output_images/
 
       - name: 5. 📦 Subir Resultados
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Filtros-Dazz-Extraidos
+          name: Filtros-Finales-V23
           path: output_images/
